@@ -1,17 +1,31 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.Cache;
+import com.hmdp.utils.RedisConstants;
+import com.hmdp.utils.RedisData;
+import com.sun.org.apache.xpath.internal.operations.Bool;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
+import java.time.LocalDateTime;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+
+import static com.hmdp.utils.RedisConstants.*;
 
 /**
  * <p>
@@ -24,26 +38,44 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
 
-@Resource
-private StringRedisTemplate stringRedisTemplate;
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private Cache cache;
+
+    private static final ExecutorService CACHE = Executors.newFixedThreadPool(10);
+    String cacheKey="Cache:code:";
     @Override
     public Result CachegetById(Long id) {
-        String cacheKey="Cache:code:";
-        //从redis中获取信息
-        String Cache = stringRedisTemplate.opsForValue().get(cacheKey + id);
-        //如果有就直接返回
-        if(StrUtil.isNotBlank(Cache)){
-            Shop shopCache = JSONUtil.toBean(Cache, Shop.class);
-            return Result.ok(shopCache);
-        }
-        //如果没有就进入数据库中查询，之后保存在缓存
-        Shop shop = getById(id);
-        if (shop == null) {
-            return Result.fail("店铺不存在");
-        }
-        String shopjson = JSONUtil.toJsonStr(shop);
-        stringRedisTemplate.opsForValue().set(cacheKey + id,shopjson,30, TimeUnit.MINUTES);
-        //然后返回
+        //解决缓存穿透
+        /*   Shop shop = queryWithPass(id);*/
+        //互斥锁解决缓存击穿
+        /*   Shop shop = queryWithMutex(id);*/
+        Shop shop = cache.queryWithPass(CACHE_SHOP_KEY,id,Shop.class,this::getById,CACHE_SHOP_TTL,TimeUnit.MINUTES);
         return Result.ok(shop);
+    }
+
+
+    private void saveShop2Reids(Long id ,Long expireSecond) throws InterruptedException {
+        Shop shop = getById(id);
+        Thread.sleep(202);
+        RedisData redisData =new RedisData();
+        redisData.setData(shop);
+        redisData.setExpireTime(LocalDateTime.now().plusSeconds(expireSecond));
+        stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id , JSONUtil.toJsonStr(redisData));
+
+    }
+    @Override
+    @Transactional
+    public Result update(Shop shop) {
+        Long id = shop.getId();
+        if (id == null) {
+            return Result.fail("店铺id不存在");
+        }
+        //更新数据库
+        updateById(shop);
+        stringRedisTemplate.delete(cacheKey + id);
+        return Result.ok();
     }
 }
