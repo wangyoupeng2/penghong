@@ -10,8 +10,10 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.service.IVoucherService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisInWork;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +37,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private IVoucherService iVoucherService;
     @Resource
     private ISeckillVoucherService seckillVoucherService;
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
     @Override
 
     public Result seckillVoucher(Long voucherId) {
@@ -50,18 +54,39 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         if (voucher.getStock() < 1) {
             return Result.fail("库存不足");
         }
-        //原本的锁使用方法，有可能在没有提交的时候就又被获取到锁,因此将锁加在这里
-        synchronized (userID.toString().intern()) {
+        //原本互斥锁使用方法，有可能在没有提交的时候就又被获取到锁,因此将锁加在这里
+        /**
+         * 集群模式下，相同的用户ID是不会被锁锁住的
+         * 集群模式下，对于锁的监听器是有两个的，但是每个监听器只能观测自己JVM下的程序运行
+         * 所以需要使用一个统一的多集群的监听器，分布式锁！！！
+         * Mysql redis zookeeper，使用redis的setnx作为分布式锁
+         */
+
+        //创建锁对象
+        SimpleRedisLock lock = new SimpleRedisLock(userID + "order", stringRedisTemplate);
+        //获取锁
+        boolean islock = lock.tryLock(5);
+        if (!islock) {
+            //错误是一般是返回错误和重试
+            return Result.fail("单一用户只允许一张");
+        }
+
+
+        //下面代码已经淘汰哩，是单机的悲观锁，上面是分布式锁
+        //synchronized (userID.toString().intern())
             //实现一人一单,因为同时存在并发问题，但是有无法进行条件判断更新，所以只能使用悲观锁
 
             /*return createVoucherOrder(voucherId);*/
             //出现一个问题，因为事务管理加在这个函数上
             //但是因为该函数调用是使用this指向，没有事物能力，所以需要寻找代理对象调用函数
 
+        try {
             IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId ,userID);
-            //获取事务代理对象，使用代理对象调用，函数要在Serive里面声明
+        } finally {
+            lock.unLock();
         }
+        //获取事务代理对象，使用代理对象调用，函数要在Serive里面声明
     }
 
     @Transactional
