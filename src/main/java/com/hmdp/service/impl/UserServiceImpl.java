@@ -14,15 +14,22 @@ import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RegexUtils;
+import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.connection.BitFieldSubCommands;
+import org.springframework.data.redis.connection.ReactiveStringCommands;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.servlet.http.HttpSession;
+import java.time.LocalDate;
+import java.time.Month;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -83,15 +90,58 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         Map<String, Object> userMap = BeanUtil.beanToMap(dto, new HashMap<>(), CopyOptions.create()
                 .setIgnoreNullValue(true)
                 .setFieldValueEditor((fieldName, fieldValue) -> fieldValue.toString()));
-
         /* session.setAttribute("user",dto);*/
         String tokenKey = RedisConstants.LOGIN_USER_KEY + token;
         //user信息传输到redis中并且设置有效时间
-
         stringRedisTemplate.opsForHash().putAll(tokenKey,userMap);
-
         stringRedisTemplate.expire(tokenKey,RedisConstants.CACHE_SHOP_TTL,TimeUnit.MINUTES);
+
         return Result.ok(token);
+    }
+
+    @Override
+    public Result sign() {
+        Long userId = UserHolder.getUser().getId();
+        //获取日期
+        LocalDate now = LocalDate.now();
+        String date = now.format(DateTimeFormatter.ofPattern("yyyyMM"));
+        String key = "sign:" + userId +date;
+        int day = now.getDayOfMonth();
+        stringRedisTemplate.opsForValue().setBit(key,day-1,true);
+        return Result.ok();
+    }
+
+    @Override
+    public Result signcount() {
+        Long userId = UserHolder.getUser().getId();
+        //获取日期
+        LocalDate now = LocalDate.now();
+        String date = now.format(DateTimeFormatter.ofPattern("yyyyMM"));
+        String key = "sign:" + userId +date;
+        int day = now.getDayOfMonth();
+        List<Long> signbits = stringRedisTemplate.opsForValue().bitField(key,
+                BitFieldSubCommands.create()
+                        .get(BitFieldSubCommands.BitFieldType.unsigned(day)).valueAt(0));
+        if(signbits == null ||signbits.isEmpty()){
+            return Result.ok(0);
+        }else{
+            Long issign = signbits.get(0);
+            if(issign == null || issign == 0){
+                return Result.ok(0);
+            }
+            int count =0;
+            while(true){
+                //先位运算，如果上来就是0的话break
+                if((issign & 1) ==0 ){
+                    break;
+                }else{
+                    //如果不是零的话
+                    count++;
+                }
+                issign>>>=1;
+            }
+            return Result.ok(count);
+        }
     }
 
     private User creatUserWithPhone(String phone) {

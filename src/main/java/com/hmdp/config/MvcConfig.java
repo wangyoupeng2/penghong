@@ -24,7 +24,7 @@ public class MvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new RefreshInterceptor(stringRedisTemplate))
-                .excludePathPatterns("/**").order(0);
+                .addPathPatterns("/**").order(0);
         registry.addInterceptor(new LoginInterceptor(stringRedisTemplate))
                 .excludePathPatterns(
                         "/user/code",

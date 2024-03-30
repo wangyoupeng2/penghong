@@ -28,10 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -116,11 +113,16 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             return Result.ok();
         }
         List<GeoResult<RedisGeoCommands.GeoLocation<String>>> list = search.getContent();
+        if(list.size() < from){
+            //没有下一页,就不会进行下面的skip，否则会出现空语句
+            return Result.ok(Collections.emptyList());
+        }
         //获取店铺id创建集合
         List<Long > ids = new ArrayList<>();
         //根据返回结构创建map保存id和distance，保存id与distance的关系
         Map<String,Distance> distanceMap = new HashMap<>(list.size());
         //截取from到end
+
         list.stream().skip(from).forEach(result ->{
             String shopID = result.getContent().getName();
             ids.add(Long.valueOf(shopID));

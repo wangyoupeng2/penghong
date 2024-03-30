@@ -57,8 +57,8 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         List<Blog> records = page.getRecords();
         // 查询用户
         records.forEach(blog ->{
-            this.BlogToUser(blog);
-            this.isBloglike(blog);}
+            BlogToUser(blog);
+            isBloglike(blog);}
         );
         return Result.ok(records);
     }
@@ -77,6 +77,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             return Result.fail("笔记不存在");
         }
         BlogToUser(blog);
+        isBloglike(blog);
         return Result.ok(blog);
     }
 
@@ -96,10 +97,10 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 (BLOG_LIKED_KEY + id, userId.toString());
         if (islike != null) {
             stringRedisTemplate.opsForZSet().remove(BLOG_LIKED_KEY + id, userId.toString());
-            update().setSql("like = like - 1").eq("id",id).update();
+            update().setSql("liked = liked - 1").eq("id",id).update();
         }else{
             stringRedisTemplate.opsForZSet().add(BLOG_LIKED_KEY + id, userId.toString(),System.currentTimeMillis());
-            update().setSql("like = like + 1").eq("id",id).update();
+            update().setSql("liked = liked + 1").eq("id",id).update();
         }
         return Result.ok();
     }
@@ -112,7 +113,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
         List<UserDTO> userList = userService.query()
                 .in("id",ids)
-                .last("order by field(id" + join + ")")
+                .last("order by field(id," + join + ")")
                 .list()
                 .stream()
                 .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
